@@ -1,0 +1,50 @@
+RavenEra License
+================
+
+Copyright (c) 2026 RavenEra contributors. All rights reserved.
+
+Permission is granted to use, copy and redistribute the RavenEra binaries
+(version.dll, SlotPrep.dll, RavenEra.dll, HearthDB.dll) and this documentation,
+in source or binary form, subject to the following conditions:
+
+1. NON-COMMERCIAL USE ONLY.
+   You may not use, sell, license, rent, sublicense or otherwise commercially
+   exploit these binaries or any derivative work, in whole or in part, without
+   prior written permission from the copyright holders. Commercial use includes
+   any use intended for or directed toward commercial advantage or monetary
+   compensation.
+
+2. ONE CLIENT BUILD ONLY.
+   The binaries are built against the memory offsets of one specific client build.
+   Any use with another client build, another launcher, or another server is
+   unsupported.
+
+3. ATTRIBUTION.
+   Redistributions of the binaries must reproduce this license and the copyright
+   notice, and must not misrepresent the origin of the software.
+
+4. NO REVERSE ENGINEERING FOR COMMERCIAL PURPOSES.
+   You may study the binaries for personal, educational or interoperability
+   purposes, but you may not use information derived from them to build a
+   commercial product.
+
+5. NO WARRANTY.
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+6. RISK.
+   The software reads and writes memory of a running game client and may cause
+   crashes, data loss or account actions. You use it entirely at your own risk.
+
+7. TERMINATION.
+   Any violation of these terms terminates your rights under this license
+   immediately.
+
+This project is not affiliated with, endorsed by, or sponsored by the game
+publisher or any server operator. All trademarks belong to their respective
+owners.
