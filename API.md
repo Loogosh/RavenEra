@@ -1,19 +1,93 @@
 # RavenEra DLL API
 
-Complete command reference for the three RavenEra libraries.
+Complete command reference for the RavenEra libraries (RavenEra.dll, HearthDB.dll).
 
-Everything the client exposes to Lua is reached through a single gate function:
+## How you call it
 
 ```lua
-RavenEra("Command", "argument")
+SetTaxiBenchmarkMode("Command", "argument")   -- RavenEra.dll gate
+GetTaxiBenchmarkMode("Command", "argument")   -- RavenEra.dll proxy entry point
+IsOnTournamentRealm("Command", "argument")    -- HearthDB.dll gate
 ```
 
-Arguments are strings; results are Lua values (booleans, numbers, strings).
-Commands whose name ends with `N` return real numbers instead of a formatted string
-and should be preferred.
+Those are the names you call. The loader takes over three script-table entries that no
+addon in the 1.12/1.14 corpora uses and swaps their **function pointers**; the names stay
+as they are, which is what makes loading reliable.
+
+If you also install the `!RavenEraAPI` addon, it assigns shorter aliases on top of them:
+
+| Alias (addon only) | Native name |
+|---|---|
+| `RavenEra(...)` | `SetTaxiBenchmarkMode` |
+| `RavenEraGate(...)` | `SetTaxiBenchmarkMode` |
+| `RavenEraProxy(...)` | `GetTaxiBenchmarkMode` |
+| `HearthDBGate(...)` | `IsOnTournamentRealm` |
+
+## The payload
+
+The native gate takes **exactly two arguments**: the command name and one payload
+string. Extra arguments are dropped, so several values are joined with `\x01`:
+
+```lua
+SetTaxiBenchmarkMode("ExportFile", path .. string.char(1) .. text)
+```
+
+With the addon, `RavenEra(cmd, a, b)` does that joining for you.
+
+Commands ending in `N` return real numbers; the same command without `N` returns a
+formatted string. Prefer the `N` variants.
+
 
 > **Threading note.** The gate may only be called from the client's Lua thread —
 > that is, from addon code. Calling it from another thread is unsupported.
+
+---
+
+## Parameter formats
+
+Every command below uses these placeholders. Passing the wrong one is the most
+common source of "the command returned nothing".
+
+| Placeholder | Meaning | Example |
+|---|---|---|
+| `<low>` | **Low part of a GUID** — the last segment of `UnitGUID`, hexadecimal. Case-insensitive, `0x` optional. This is what most commands want. | `"277b29"` |
+| `<guid>` | **Full GUID string**, or `<low>`. Both are accepted. | `"Creature-0-1-0-0-6466-0000003025"` |
+| `<token>` | **Unit token** as used by the stock API. See the list below. | `"target"` |
+| `<num>` | Decimal number. | `"1500"` |
+| `<a>,<b>` | Two `<low>` values separated by a **comma**, no spaces. | `"242f,277b29"` |
+| `<radius>` | Decimal radius in yards. | `"40"` |
+| `<combo>` | Key combination with `+`. | `"CTRL+SHIFT+X"`, `"W"`, `"ENTER"` |
+| `<path>` | Path relative to the game folder. `..` and absolute paths are rejected. | `"Logs\\out.txt"` |
+| `<text>` | Free text; may contain `\x01` only as an internal separator. | `"line one\r\n"` |
+
+### How to get a `<low>`
+
+```lua
+local low = UnitGUID("target"):match("(%x+)$")     --> "277b29"
+```
+
+`UnitGUID` returns `Creature-0-1-0-0-6466-0000003025`; `:match("(%x+)$")` keeps the
+`3025` part. Never pass the full string to a `<low>` parameter — use `<guid>` or the
+`-Low` command variant instead.
+
+### Valid `<token>` values
+
+`player`, `target`, `focus`, `mouseover`, `pet`, `targettarget`, `pettarget`,
+`party1`…`party4`, `pet1`…`pet4`, `raid1`…`raid40`, `raidpet1`…`raidpet40`,
+`boss1`…`boss8`, `nameplate1`…`nameplate40`, `arena1`…`arena5`.
+
+`RavenEra("UnitCandidateList")` prints the tokens this client actually accepts.
+
+### Which commands take which
+
+| Parameter | Commands |
+|---|---|
+| `<low>` | `UnitHP`, `UnitHPN`, `UnitStats`, `UnitStatsN`, `UnitPowerN`, `UnitResist`, `UnitResistN`, `UnitReach`, `UnitReachN`, `UnitNameN`, `UnitTypeN`, `UnitOwner`, `UnitTarget`, `Assist`, `ReactionN`, `Reaction`, `IsHostile`, `LootProbe`, `LootProbeN`, `ObjByGuid`, `ScanObj`, `TokenForGuid` |
+| `<low>` **or** `<token>` | `UnitPos`, `UnitPosN` |
+| `<guid>` | `TargetByGuid`, `FocusByGuid` |
+| `<low>` only | `TargetByGuidLow` |
+| `<token>` **or** `<guid>` | `SetTargetCore`, `SetTargetToken`, `ResolveToken`, `SetFocusToken`, `NameplateIndex` |
+| `<a>,<b>` | `UnitDist`, `UnitBehindN`, `LosUnits` |
 
 ---
 
@@ -22,11 +96,11 @@ and should be preferred.
 | Command | Returns | Description |
 |---|---|---|
 | `Ping` | `true` | Sanity check: the DLL is loaded and the gate answers. |
-| `Caps` | `15` | Capability bitmask (reserved for feature detection). |
+| `Caps` | `number` | Capability bitmask (reserved for feature detection). |
 | `GetVersion` / `ver` | `0, 1` | Gate protocol version. |
-| `Pump` | — | Drains the internal work queue. |
-| `Reset` | — | Resets the gate's internal state. |
 | `ArmNextTarget` | `true` | Arms the secure bit for the next protected engine call. |
+| `GetLocalPlayer` | `string` | Address of the local player object (hex). |
+| `UnitCandidateList` | `string` | All unit tokens this client accepts, space separated. |
 
 ---
 
@@ -35,329 +109,238 @@ and should be preferred.
 | Command | Returns | Description |
 |---|---|---|
 | `ObjMgr` | `"begin/end/count"` | Addresses and size of the object container (diagnostics). |
-| `ObjCount` | `number, string` | Number of live objects. |
-| `ObjDbg` | `string` | Dumps the object container. |
-| `ObjByGuid` | `"found=… vt=… pos=…"` | Object address, vtable and position for a GUID. Searches the container and memory, so the GUID does not have to be the current target. |
-| `ScanObj` | `string` | Raw object scan (diagnostics, up to 64 MB). |
-| `GetLocalPlayer` | `string` | Address of the local player object. |
+| `ObjCount` | `number` | Number of live objects. |
+| `ObjDbg` | `string` | Dumps the object container (diagnostics). |
+| `ObjByGuid(<low>)` | `"found=… vt=… pos=…"` | Object address, vtable and position. Searches the container and memory, so the unit does not have to be your target. |
+| `ScanObj(<low>)` | `"found=… pos=…"` | Same lookup, shorter output (diagnostics). |
+| `TokenForGuid(<low>)` | `string` | Unit token for that GUID (`"player"`, `"nameplate3"`), when the client has one. |
 
 ---
 
-## 3. Scanning
+## 3. Unit data (read-only)
 
-| Command | Returns | Description |
-|---|---|---|
-| `ScanUnits` | `n, "guid:dist:hp:max:lvl:kind …"` | Units within a radius. Optional flags appended to the radius: `p` include players, `d` include dead, `h` hostile only. |
-| `ScanCorpses` | `n, "guid:dist:hasLoot …"` | Corpses within a radius, with a loot flag. |
-| `ScanNameplates` | `"n=K 1:guid 2:guid …"` | All active nameplates and their units. |
-| `ScanMarks` | `"n=K 1:guid 4:guid …"` | All active raid marks. |
-
-`kind` is `n` (npc), `p` (player) or `d` (dead).
-
----
-
-## 4. Unit data
-
-All of these accept a bare hex GUID low (for example `"277b42"`).
-`UnitPosN` additionally accepts unit tokens such as `player`, `target` or `pet`.
-
-| Command | Returns | Description |
-|---|---|---|
-| `UnitPos` | `"r=1 x y z o"` | Position and orientation as text (debugging). |
-| `UnitPosN` | `ok, x, y, z, orientation` | Position and orientation as numbers. |
-| `UnitStats` | `"r=1 hp=… level=… armor=…"` | All stats as text. |
-| `UnitStatsN` | `ok, hp, maxHp, power, maxPower, level, armor` | All stats as numbers. |
-| `UnitHP` | `"r=1 hp=… max=… level=…"` | Health as text. |
-| `UnitHPN` | `ok, hp, maxHp, level` | Health as numbers. |
-| `UnitPowerN` | `ok, power, maxPower, powerType` | Power as numbers. `powerType`: 0 mana, 1 rage, 2 focus, 3 energy. |
-| `UnitResist` | `"r=1 armor=… holy=… …"` | Armor and school resistances as text. |
-| `UnitResistN` | `ok, armor, holy, fire, nature, frost, shadow, arcane` | Resistances as numbers. |
-| `UnitReach` | `"ok=1 reach=… radius=…"` | Combat reach and hit radius as text. |
-| `UnitReachN` | `ok, reach, radius` | Combat reach and hit radius as numbers. |
-| `UnitDist` | `number` or `-1` | Distance between two GUIDs, passed as `"guidA,guidB"`. |
-| `UnitBehindN` | `ok, behind, angleDeg` | Whether unit A stands behind unit B, plus the exact angle. |
-| `UnitOwner` | `"ok=… lo=… hi=…"` | Owner GUID of a pet or totem. |
-| `UnitNameN` | `string` or `nil` | Creature name by GUID, read straight from the creature record. Players return `nil`. |
-| `UnitTypeN` | `id, name` | Creature type id and name. `1 Beast`, `2 Dragonkin`, `3 Demon`, `4 Elemental`, `5 Giant`, `6 Undead`, `7 Humanoid`, `8 Critter`, `9 Mechanical`, `10 Not specified`, `11 Totem`. |
+| Command | Payload | Returns | Description |
+|---|---|---|---|
+| `UnitPos(<low\|token>)` | unit | `"r=1 x y z o"` | Position and orientation as text. |
+| `UnitPosN(<low\|token>)` | unit | `ok, x, y, z, o` | Same as numbers. |
+| `UnitStats(<low>)` | low | `"r=1 hp=… max=… pow=… maxpow=… level=… armor=…"` | Full stat block as text. |
+| `UnitStatsN(<low>)` | low | `ok, hp, maxhp, power, maxpower, level` | Same as numbers. |
+| `UnitHP(<low>)` | low | `"r=1 hp=… max=… level=…"` | Health and level as text. |
+| `UnitHPN(<low>)` | low | `ok, hp, maxhp, level` | Health and level as numbers. |
+| `UnitPowerN(<low>)` | low | `ok, power, maxpower` | Mana/rage/energy. |
+| `UnitResist(<low>)` | low | `"r=1 armor=… holy=… fire=…" …` | Armor and the six resistances as text. |
+| `UnitResistN(<low>)` | low | `ok, armor, holy, fire, nature, frost, shadow, arcane` | Same as numbers (8 values). |
+| `UnitReach(<low>)` | low | `"ok=1 reach=… radius=…"` | Combat reach and hit radius as text. |
+| `UnitReachN(<low>)` | low | `ok, reach, radius` | Same as numbers. |
+| `UnitNameN(<low>)` | low | `string` | Name from the creature record (e.g. `Voidwalker` for a renamed pet). |
+| `UnitTypeN(<low>)` | low | `number, string` | Creature type id and name (`3, "Demon"`). |
+| `UnitOwner(<low>)` | low | `"ok=1 lo=… hi=…"` | Owner GUID of a pet or totem; `lo=0` when there is no owner. |
+| `UnitTarget(<low>)` | low | `string` | Low GUID of **what that unit is targeting**. Same as the client's `targettarget`. |
+| `UnitLastTarget()` | — | `string` | Low GUID of the last unit you had targeted. |
+| `LastTarget()` | — | `true` | Re-targets the unit from `UnitLastTarget`. |
+| `UnitDist(<a>,<b>)` | two lows | `number` | Distance in yards between two units; `-1` when either is not found. |
+| `UnitBehindN(<a>,<b>)` | two lows | `ok, behind, angle` | Is `b` behind `a` (angle ≥ 90°). |
 
 ---
 
-## 5. Targets
+## 4. Reaction and hostility
 
-| Command | Returns | Description |
-|---|---|---|
-| `TargetByGuid` | `bool` | Targets a unit by a full GUID string, for example `"Creature-0-1-0-0-62226-0000277B41"`. |
-| `TargetByGuidLow` | `bool` | Targets a unit by a bare hex GUID low. |
-| `SetTargetToken` | `bool` | Targets a unit by token (`target`, `pet`, `focus`, …). |
-| `SetTargetCore` | `bool` | Low level engine target call. |
-| `ClearTargetCore` | `bool` | Clears the target through the engine. The Lua `ClearTarget` is protected and silently refuses. |
-| `ResolveToken` | `"r=1 lo=… hi=…"` | Resolves a unit token to its 128-bit GUID. `r=0` means the client cannot resolve it right now. |
-| `UnitTarget` | `hex` or `nil` | Current target GUID low of the given unit. |
-| `UnitLastTarget` | `hex` or `nil` | Previous target GUID low of the player. |
-| `Assist` | `bool` | Targets whatever the given unit is targeting. |
-| `LastTarget` | `bool` | Returns to the previous target. |
+| Command | Payload | Returns | Description |
+|---|---|---|---|
+| `ReactionN(<low>)` | low | `number` | Reaction `1`…`8`: 1 hated, 2 hostile, 3 unfriendly, 4 neutral, 5 friendly, 6+ honoured. |
+| `Reaction(<low>)` | low | `string` | `"5 friendly"`, `"4 neutral"`, `"2 hostile"`. |
+| `IsHostile(<low>)` | low | `bool` | `true` only for reaction ≤ 3. Neutral mobs and friendly pets return `false`. |
+
+Rules used by the scans:
+
+| Meaning | Rule |
+|---|---|
+| hostile | reaction ≤ 3 |
+| attackable | reaction ≤ 4 (neutral is attackable, friendly is not) |
+| friendly | reaction ≥ 5 |
+
+The attackable **flag** in the descriptor is unreliable on its own: neutral NPCs such
+as Gamon are attackable but do not carry it.
+
+---
+
+## 5. Targeting
+
+| Command | Payload | Returns | Description |
+|---|---|---|---|
+| `TargetByGuid(<guid>)` | full GUID or low | `bool` | Sets your target. Accepts `Creature-…-HEX` or bare hex. |
+| `TargetByGuidLow(<low>)` | low only | `bool` | Same, but strictly a low part. |
+| `SetTargetCore(<token\|guid>)` | token or GUID | `bool` | Kernel-level target set; works where the stock API is protected. |
+| `SetTargetToken(<token\|guid>)` | token or GUID | `bool` | Alias of `SetTargetCore`. |
+| `Assist(<low>)` | low | `bool` | **Takes the target of that unit**: reads its target GUID and makes it yours. Fails when the unit has no target. |
+| `ClearTargetCore()` | — | `true` | Clears the target. |
+| `ResolveToken(<token\|guid>)` | token or GUID | `"r=1 lo=… hi=…"` | Resolves a token (or GUID) to the raw GUID halves. Empty payload resolves the current target. |
+
+`Assist` needs the unit's **low**, not a token:
+
+```lua
+local low = UnitGUID("target"):match("(%x+)$")
+print(RavenEra("Assist", low))     --> true, and your target becomes what that unit targets
+```
+
+If that unit has no target of its own, `Assist` returns `false` and your target does
+not change.
 
 ---
 
 ## 6. Focus
 
-| Command | Returns | Description |
-|---|---|---|
-| `FocusByGuid` | `bool` | Sets the focus by GUID. |
-| `SetFocusToken` | `bool` | Sets the focus by token. |
-| `FocusDesc` | `string` | Raw focus descriptor (diagnostics). |
-| `ClearFocus` | `bool` | Clears the focus. |
+| Command | Payload | Returns | Description |
+|---|---|---|---|
+| `SetFocusToken(<token\|guid>)` | token or GUID | `bool` | Sets the focus unit. |
+| `FocusByGuid(<guid>)` | full GUID or low | `bool` | Same, taking a GUID. |
+| `FocusDesc()` | — | `"lo=… hi=…"` | Focus GUID halves. |
+| `ClearFocus()` | — | `true` | Clears the focus. |
 
 ---
 
-## 7. Hostility
+## 7. Scanning
 
-| Command | Returns | Description |
-|---|---|---|
-| `IsHostile` | `bool` | Whether the unit is attackable by the player. Units owned by the player (own pet, totem) are excluded. |
-| `NearestHostileN` | `guid, dist, hp, level` | Nearest hostile unit within a radius. |
+| Command | Payload | Returns | Description |
+|---|---|---|---|
+| `ScanUnits(<radius>[,p][,d][,h][,a])` | radius + flags | `n, list, "slots=… live=… inrange=… passed=…"` | All units in range. |
+| `ScanCorpses(<radius>)` | radius | `n, list` | Lootable corpses only. |
+| `NearestHostileN(<radius>)` | radius | `low, dist, hp, level` | Nearest unit with reaction ≤ 3. |
+| `NearestAttackableN(<radius>)` | radius | `low, dist, hp, level` | Nearest unit with reaction ≤ 4. |
+| `ScanNameplates()` | — | `n, list` | Visible nameplates (`1:guid 2:guid …`). |
+| `ScanMarks()` | — | `n, list` | Raid marks (`4:guid …`). |
+| `NameplateGuid(<num>)` | 1-based index | `string` | Low GUID behind that nameplate slot. |
+| `NameplateIndex(<token\|guid>)` | token or GUID | `number` | Nameplate slot of a unit, `-1` when it has none. |
+| `MarkGuid(<num>)` | 1…8 | `string` | Low GUID carrying that raid mark. |
+
+### Flags
+
+| Flag | Meaning |
+|---|---|
+| `p` | include players |
+| `d` | include dead units |
+| `h` | only hostile (reaction ≤ 3) |
+| `a` | only attackable (reaction ≤ 4) |
+
+### List format
+
+Each entry is `guid:dist:hp:maxhp:level:kind`, separated by spaces:
+
+```
+277b29:12.1:288:288:12:n 2c4:16.0:847:847:25:n
+```
+
+`kind` is `n` (NPC), `p` (player) or `d` (dead).
+
+The first return value is the number of entries; the third explains how many objects
+were seen and why some were filtered out.
 
 ---
 
-## 8. Line of sight
+## 8. Loot
 
-| Command | Returns | Description |
-|---|---|---|
-| `Los` | `"ctx=… found=…"` | Line-of-sight context state (diagnostics). |
-| `LosUnits` | `"insight=… hit=… d=… dist=…"` | Direct visibility between two GUIDs, passed as `"guidA,guidB"`. |
+| Command | Payload | Returns | Description |
+|---|---|---|---|
+| `LootProbe(<low>)` | low | `"rc=1 obj=… id=… hasLoot=… canLoot=…"` | Loot state of a corpse as text. |
+| `LootProbeN(<low>)` | low | `ok, hasLoot, canLoot, id` | Same as numbers. `canLoot` is unreliable — the client reports `0` even at 0.3 yards where looting works. |
+| `Loot([<num>])` | slot, default 1 | `number` | Takes that loot slot of the open window. `1` = taken, `0` = nothing. |
 
----
-
-## 9. Tokens and marks
-
-| Command | Returns | Description |
-|---|---|---|
-| `TokenForGuid` | `string` or `nil` | Token name for a GUID low, including `nameplateN` when the unit has a nameplate. |
-| `UnitCandidateList` | `string` | All tokens separated by spaces: 58 fixed tokens plus the nameplates that actually exist. |
-| `MarkGuid` | `hex` or `nil` | GUID low of the unit carrying raid mark `1..8`. |
-| `NameplateIndex` | `number` or `-1` | Nameplate index of a GUID, 0-based. `-1` means the unit has no nameplate. |
-| `NameplateGuid` | `hex` or `nil` | GUID low of nameplate `1..40`. |
+The loot window must already be open — see `InteractIn`.
 
 ---
+
+## 9. Interaction (the only synthetic input)
+
+The library deliberately exposes **one** input action. There is no generic key press,
+no key hold and no movement control.
+
+| Command | Payload | Returns | Description |
+|---|---|---|---|
+| `InteractKey()` | — | `bool` | Presses the user's interact key, which fires `INTERACTTARGET`. |
+| `InteractIn([<num>])` | delay ms, default `0` | `bool` | Same, after a delay, from a worker thread. |
+
+Both commands refuse to press anything unless **all** of these hold:
+
+| Condition | Checked |
+|---|---|
+| the current target exists | in the client's target slot |
+| the target is a corpse | descriptor health is `0` |
+| the corpse still has loot | the client's own "has loot" query |
+| the corpse is within interact range | `<= 5` yards from the player |
+
+Anything else returns `false` and no key is sent.
+
+The key itself is fixed: `Ctrl+Shift+X`. It must be bound to `INTERACTTARGET`, and the
+library can only ever trigger that one action, never an arbitrary key. The binding is
+set through the proxy entry point, which reaches the client's own `SetBinding`:
+
+```lua
+GetTaxiBenchmarkMode("CTRL-SHIFT-X", "INTERACTTARGET", "bind")   --> 1
+```
+
+Run it once per session, or let the `!RavenEraAPI` addon do it on load. No addon is
+required for it.
 
 ## 10. Camera
 
 | Command | Returns | Description |
 |---|---|---|
-| `CameraPosN` | `ok, x, y, z` | Camera position in the world. |
-| `CameraAnglesN` | `ok, yaw, pitch, distance` | Camera orientation and distance from the player. Angles are in radians; a negative pitch means looking down. |
-| `CameraAllN` | `ok, x, y, z, yaw, pitch, distance` | Everything in one call. |
-
-The camera angles are derived from the camera position and the look-at point, so they
-stay correct regardless of zoom or first-person mode.
+| `CameraPosN()` | `ok, x, y, z` | Camera position. |
+| `CameraAnglesN()` | `ok, yaw, pitch, distance` | Camera orientation and distance to the target. |
+| `CameraAllN()` | `ok, x, y, z, yaw, pitch, distance` | Everything in one call. |
 
 ---
 
-## 11. Loot
+## 11. Files
 
-| Command | Returns | Description |
-|---|---|---|
-| `Loot` | `1` / `0` | Takes a loot slot from an open loot window. Engine call that bypasses the Lua protection. |
-| `LootProbe` | `"rc=… obj=… hasLoot=… canLoot=…"` | Loot flags for a GUID as text. |
-| `LootProbeN` | `rc, hasLoot, canLoot, id` | Loot flags as numbers and booleans. `rc=0` means the object was not found. |
-| `SetAutoloot` | `true` | Compatibility flag; logged only. |
+| Command | Payload | Returns | Description |
+|---|---|---|---|
+| `ExportFile(<path>\x01<text>)` | path + text | `bool` | Overwrites a file with `text`. |
+| `AppendFile(<path>\x01<text>)` | path + text | `bool` | Appends to a file. |
+| `ImportFile(<path>)` | path | `string` or `"open failed"` | Reads a whole file. |
+| `CombatLogAdd(<line>[\x01<mode>])` | line + mode | `bool` | Writes a line into the combat log files. |
 
----
+Paths are relative to the game folder; `..`, `/` and absolute paths are rejected by
+`ExportFile` with `"unsafe path"`.
 
-## 12. Input
+`CombatLogAdd` modes:
 
-| Command | Returns | Description |
-|---|---|---|
-| `InteractKey` | `true` | Presses the interact binding through `SendInput`. This is the only way to open a loot window, because Lua-initiated interaction is blocked. |
-| `InteractKeyMsg` | `true` | Same thing through `PostMessage`; a fallback when `SendInput` is filtered. |
-| `MoveKeysUp` | `number` | Releases W/A/S/D/Space and returns the key mask that was held. |
-| `MoveKeysDown` | `bool` | Restores the keys from a mask returned by `MoveKeysUp`. |
-
----
-
-## 13. Files and logging
-
-| Command | Returns | Description |
-|---|---|---|
-| `AppendFile` | `bool` | Appends text to a file. The payload is `"path\0text"`. |
-| `ExportFile` | `bool` | Overwrites a file. |
-| `ImportFile` | `string` or `nil, "open failed"` | Reads a file. |
-| `CombatLogAdd` | `bool` | Adds an entry to the client combat log. |
-| `TrackUnit` / `UntrackUnit` | `bool` | Compatibility stubs. |
-
----
-
-## Return value conventions
-
-| Convention | Meaning |
+| Mode | Effect |
 |---|---|
-| `ok` (first value) | `true` when the call succeeded. Always check it. |
-| `nil` with no second value | The command did not push anything; treat it as a miss. |
-| `-1` | Explicit failure marker (distance, index). |
-| `hex` | GUID low as a lowercase hexadecimal string without `0x`. |
-
-## Known limitations
-
-| Limitation | Detail |
-|---|---|
-| Radius scans | The result buffer holds roughly 20 units per call; `n` is the true count. |
-| `UnitDist` and `LosUnits` | Accept only `"guidA,guidB"`, not tokens. |
-| Creature data | `UnitNameN` and `UnitTypeN` work for creatures only; players return `nil`. |
-| Corpses | A corpse must be loaded in the object container. Objects that are out of range are not in memory. |
-| Descriptor updates | The client updates descriptor fields on the next frame, so wait a frame after changing the target before reading it. |
-| Casting | Not provided. Use the built-in `UnitCastingInfo` and `UnitChannelInfo`. |
-| Protected actions | Casting and interaction cannot be triggered from the DLL; input has to go through `SendInput`. |
+| *(none)* | Timestamped line into the session `Logs\WoWCombatLog-*.txt` and the root `WowCombatLog.txt`. |
+| `raw` | Same, plus `WoWRawCombatLog.txt`. |
+| `root` | Only the root `WowCombatLog.txt`, timestamped. |
+| `plain` | No timestamp, root file only. |
 
 ---
 
-## Example
+## 12. Diagnostics
 
-```lua
--- minimal gate wrapper (the addon shipped separately is not part of this release)
-local G = SetTaxiBenchmarkMode            -- the FrameScript slot claimed by SlotPrep
-local function RavenEra(cmd, arg) return G(cmd, arg) end
-
-local ok, x, y, z, o = RavenEra("UnitPosN", "player")
-if ok then print(string.format("player at %.1f %.1f %.1f", x, y, z)) end
-
-local n, list = RavenEra("ScanUnits", "30,h")
-print(n .. " hostiles: " .. tostring(list))
-
-local guid, dist = RavenEra("NearestHostileN", "40")
-if guid then print("nearest hostile " .. guid .. " at " .. dist) end
-```
-
+| Command | Payload | Returns | Description |
+|---|---|---|---|
+| `Los()` | — | `"ctx=… open=… ground=…"` | Line-of-sight context. |
+| `LosUnits(<a>,<b>)` | two lows | `"insight=… hit=… d=… dist=…"` | Line of sight between two units. `hit=1, insight=0` means something blocks it. |
 
 ---
 
-# 14. HearthDB — embedded SQLite (separate gate)
+## Common mistakes
 
-`HearthDB.dll` claims its own FrameScript slot, so it has a **separate gate**:
-
-```lua
-local H = IsOnTournamentRealm        -- HearthDB gate
-```
-
-Its commands take several arguments, joined by `\x01` (`string.char(1)`) when calling
-through Lua:
-
-```lua
-local SEP = string.char(1)
-H("Query", handle .. SEP .. "select * from t where name = 'x'")
-```
-
-The addon that usually wraps this gate is **not required**. Everything below is callable
-directly; the only thing an addon adds is parsing of the packed result string.
-
-## 14.1 Connection
-
-| Command | Returns | Description |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `GetVersion` / `ver` | `major, minor, patch` | Engine version, currently `0, 4, 1`. |
-| `Open` | `handle` or `nil, error` | Opens a database file relative to the client folder. |
-| `OpenAddon` | `handle` or `nil, error` | Opens a database shipped inside an addon. Payload is `"addonName\x01path/in/addon"`. Opened read-only. |
-| `Close` | — or `nil, error` | Closes a handle. |
-| `Reset` | — | Resets the engine. |
-| `Pump` | — | Drains the async queue. Call it from an `OnUpdate` handler if you use async commands. |
-| `ClearPoison` | — | Clears a poisoned handle after a failed statement. |
+| Command returns nothing | Wrong parameter format | Check the table above: `<low>` vs `<guid>` vs `<token>`. |
+| `Assist` returns `false` | That unit has no target | It only works when the unit itself targets something. |
+| `UnitTarget` returns nothing | Same | The unit is not targeting anything. |
+| `Loot` returns `0` | No loot window open | Target a lootable corpse in range, then call `InteractIn` and wait ~1 s. |
+| `ScanUnits` misses a unit | Flag filter or radius | Check the `h`/`a` flags and the radius. |
+| `ExportFile` returns `"unsafe path"` | `..` or `/` in the path | Use backslashes relative to the game folder. |
+| Second argument ignored | The gate takes only two arguments | Join extra values with `\x01`. |
 
-Handles are small integers starting at 1.
+## Status conventions
 
-## 14.2 Synchronous queries
-
-| Command | Returns | Description |
-|---|---|---|
-| `Execute` | — or `nil, error` | Runs a statement that returns no rows: `INSERT`, `UPDATE`, `DELETE`, DDL. Payload is `"handle\x01sql"`. |
-| `Query` | `packed` or `nil, error` | Runs a `SELECT` and returns a packed table with column names. |
-| `QueryRaw` | `packed` or `nil, error` | Same, but without the named-column header semantics. |
-
-## 14.3 Asynchronous queries
-
-| Command | Returns | Description |
-|---|---|---|
-| `ExecuteAsync` | `ticket` or `nil, error` | Queues a statement. Returns a ticket number. |
-| `QueryAsync` | `ticket` or `nil, error` | Queues a `SELECT`. |
-| `QueryRawAsync` | `ticket` or `nil, error` | Queues a raw `SELECT`. |
-| `GetResult` | `packed` / `rowsAffected` / `nil` / `nil, error` | Fetches the result of a ticket. Returns `nil` (one value) while the job is still pending, an integer for `INSERT`/`UPDATE`, or the packed string for a query. |
-
-Async jobs run on a worker thread. Call `Pump` regularly to deliver ready results.
-
-## 14.4 Packed result format
-
-A query result is one Lua string:
-
-```
-S<ncols>;<len>:<colName><len>:<colName>...<nrows>;<len>:<cell><len>:<cell>...
-```
-
-* `S` marks the start of a packed table.
-* Every field length is decimal digits followed by `:`, then exactly that many bytes.
-* A length of `-1` means SQL `NULL` and no bytes follow.
-* Rows are flattened: `nrows × ncols` cells in reading order.
-
-Minimal parser:
-
-```lua
-local function parsePacked(s)
-  if type(s) ~= "string" or s:byte(1) ~= 83 then return nil, "not packed" end
-  local pos = 2
-  local function number(stop)
-    local p = s:find(stop, pos, true)
-    if not p then return nil end
-    local v = tonumber(s:sub(pos, p - 1))
-    pos = p + 1
-    return v
-  end
-  local ncols = number(";")
-  local cols = {}
-  for i = 1, ncols do
-    local n = number(":")
-    cols[i] = s:sub(pos, pos + n - 1)
-    pos = pos + n
-  end
-  local nrows = number(";")
-  local rows = {}
-  for r = 1, nrows do
-    local row = {}
-    for c = 1, ncols do
-      local n = number(":")
-      if n >= 0 then
-        row[cols[c]] = s:sub(pos, pos + n - 1)
-        pos = pos + n
-      end
-    end
-    rows[r] = row
-  end
-  return rows, cols
-end
-```
-
-## 14.5 Example
-
-```lua
-local H = IsOnTournamentRealm        -- slot 0 gate
-local SEP = string.char(1)
-
--- database shipped inside an addon, opened read-only
-local h = H("OpenAddon", "HearthDB" .. SEP .. "data/smoke.db")
-if not h then return end
-
--- synchronous query; the result is one packed string
-local packed = H("Query", h .. SEP .. "select 1 as x")
-local rows = parsePacked(packed)
-if rows then print(rows[1].x) end          -- prints 1
-
-H("Close", h)
-```
-
-Verified output for the query above: `S1;1:x1;1:1` — one column `x`, one row, value `1`.
-
-## 14.6 HearthDB limitations
-
-| Limitation | Detail |
+| Form | Meaning |
 |---|---|
-| One writer | SQLite allows a single writer at a time; concurrent `Execute` calls return a busy error. |
-| Paths | Relative to the client folder. Forward slashes work, backslashes must be escaped in Lua strings. |
-| Read-only addon databases | `OpenAddon` opens read-only by design. |
-| Async delivery | Results are delivered only while `Pump` is called; without it, `GetResult` keeps returning `nil`. |
-| Threading | Same rule as the unit gate: call from the Lua thread only. |
+| `true` / `false` | Plain boolean result. |
+| `1` / `0` | Numeric result. |
+| no values | The unit or object was not found. |
+| `ok` as first value | Boolean success of an `N` command; the rest is valid only when it is `true`. |
+| `<cmd>N` vs `<cmd>` | Numbers vs formatted text. |

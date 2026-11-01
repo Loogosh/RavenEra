@@ -6,16 +6,22 @@ does not expose through its own scripting API: exact unit positions, distances, 
 sight, target and focus control, raid marks, nameplates, creature names and types,
 the camera, loot handling, hardware input, and an embedded SQLite engine.
 
-Everything is reached through two gate functions that live in the DLLs:
+Everything is reached through gate functions that live in the DLLs:
 
 ```lua
-RavenEra("Command", "argument")          -- unit, world, loot and input commands
-HearthDB("Command", "argument")          -- SQLite commands (gate name: IsOnTournamentRealm)
+SetTaxiBenchmarkMode("Command", "argument")   -- unit, world, loot and input commands
+GetTaxiBenchmarkMode("Command", "argument")   -- binding control and native calls
+IsOnTournamentRealm("Command", "argument")    -- SQLite commands
 ```
+
+Those names belong to the client; the loader takes over three unused script-table entries
+and swaps their function pointers, keeping the names so loading stays reliable. With the
+`!RavenEraAPI` addon installed you can use the shorter aliases `RavenEra(...)`,
+`RavenEraGate(...)`, `RavenEraProxy(...)` and `HearthDBGate(...)`.
 
 See **[API.md](API.md)** for the full command reference, including the SQL API.
 
-**Version 1.0**
+**Version 1.1**
 
 ---
 
@@ -57,8 +63,8 @@ executable on disk stays untouched.
 Verify the installation from chat:
 
 ```
-/run print(SetTaxiBenchmarkMode("Ping"))          -- unit gate, prints true
-/run print(IsOnTournamentRealm("GetVersion"))     -- SQL gate, prints 0 4 1
+/run print(SetTaxiBenchmarkMode("Ping"))       -- unit gate, prints true
+/run print(IsOnTournamentRealm("GetVersion"))  -- SQL gate, prints 0 4 1
 ```
 
 ---
@@ -73,10 +79,10 @@ Anyone claiming otherwise is wrong. What this project does and does not do:
 | Modifies the executable on disk | **No.** The executable is never patched. |
 | Adds files next to the executable | Yes — the four DLLs. |
 | Loads at startup under a system library name | Yes, `version.dll` is a proxy. |
-| Reads client memory | Yes, read-only for all data commands. |
-| Writes client memory | No data is written; only the two script gates are registered. |
-| Sends synthetic input | Only `InteractKey` / `InteractKeyMsg`, on explicit call. |
-| Automates gameplay by itself | **No.** Nothing runs unless your own addon calls it. |
+| Reads client memory | Yes. Every data command is a read of client structures. |
+| Writes client memory | **Yes, briefly and narrowly.** The loader rewrites three script-table function pointers at startup, and the client's own "protected action allowed" flag is set and restored around target/focus/assist/cast calls (`ArmNextTarget`, `SetTargetCore`). No game data is written. |
+| Sends synthetic input | One key press only: `InteractKey` / `InteractIn`, and only when the current target is a dead, lootable corpse within 5 yards. There is no generic key press, no key hold and no movement control. The key must be bound to `INTERACTTARGET`; bind it once per session with `GetTaxiBenchmarkMode("CTRL-SHIFT-X", "INTERACTTARGET", "bind")`, no addon needed. |
+| Automates gameplay by itself | **No.** The library has no timers of its own, no combat logic and no background loop; every command runs only when an addon calls it. |
 
 Practical precautions, in order of importance:
 
