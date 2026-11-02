@@ -5,34 +5,37 @@ Complete command reference for the RavenEra libraries (RavenEra.dll, HearthDB.dl
 ## How you call it
 
 ```lua
-SetTaxiBenchmarkMode("Command", "argument")   -- RavenEra.dll gate
-GetTaxiBenchmarkMode("Command", "argument")   -- RavenEra.dll proxy entry point
-IsOnTournamentRealm("Command", "argument")    -- HearthDB.dll gate
+RavenEraGate("Command", "argument")    -- RavenEra.dll gate
+RavenEraProxy("Command", "argument")   -- RavenEra.dll proxy entry point
+HearthDBGate("Command", "argument")    -- HearthDB.dll gate
 ```
 
-Those are the names you call. The loader takes over three script-table entries that no
-addon in the 1.12/1.14 corpora uses and swaps their **function pointers**; the names stay
-as they are, which is what makes loading reliable.
-
-If you also install the `!RavenEraAPI` addon, it assigns shorter aliases on top of them:
-
-| Alias (addon only) | Native name |
-|---|---|
-| `RavenEra(...)` | `SetTaxiBenchmarkMode` |
-| `RavenEraGate(...)` | `SetTaxiBenchmarkMode` |
-| `RavenEraProxy(...)` | `GetTaxiBenchmarkMode` |
-| `HearthDBGate(...)` | `IsOnTournamentRealm` |
+The loader takes over three script-table entries that no addon uses and renames them to
+these names; the name strings live in the loader's own memory, so nothing overwrites them.
+No addon is required to call them.
 
 ## The payload
 
 The native gate takes **exactly two arguments**: the command name and one payload
-string. Extra arguments are dropped, so several values are joined with `\x01`:
+string. Extra arguments are dropped, so a command that needs several values receives them
+inside that one string. **The separator depends on the command**, and the two are not
+interchangeable - the wrong one silently returns a wrong result:
+
+| Separator | Commands | Example |
+|---|---|---|
+| `\x01` (character 1) | `ExportFile`, `AppendFile`, `CombatLogAdd` | `RavenEraGate("ExportFile", path .. string.char(1) .. text)` |
+| `,` (comma) | `UnitDist`, `UnitBehindN`, `LosUnits`, and the flag list of `ScanUnits` / `ScanCorpses` | `RavenEraGate("UnitDist", low_a .. "," .. low_b)` |
+
+Building the payload is the caller's job. `RavenEraLib` (a plain Lua file, no addon
+required) does it for you:
 
 ```lua
-SetTaxiBenchmarkMode("ExportFile", path .. string.char(1) .. text)
+RavenEraLib.Call("Ping")                              -- one value
+RavenEraLib.Sept("ExportFile", path, text)            -- joins with \x01
+RavenEraLib.Pair("UnitDist", "player", "target")   -- joins with a comma
+RavenEraLib.Scan("40", "p", "d")                      -- "40,p,d"
+RavenEraLib.BindInteract()                            -- F9 -> INTERACTTARGET
 ```
-
-With the addon, `RavenEra(cmd, a, b)` does that joining for you.
 
 Commands ending in `N` return real numbers; the same command without `N` returns a
 formatted string. Prefer the `N` variants.
@@ -42,6 +45,26 @@ formatted string. Prefer the `N` variants.
 > that is, from addon code. Calling it from another thread is unsupported.
 
 ---
+
+## Helper library
+
+`library/RavenEraLib.lua` (version 1.2) is **not part of the DLL** and is installed
+separately: copy the file into your addon. It is a plain Lua file, not an addon - it defines
+the global `RavenEraLib` when included and does nothing else. It builds the payloads the
+gate expects and resolves the gate names for you.
+
+| Call | What it does |
+|---|---|
+| `RavenEraLib.VERSION` | library version, matches the release |
+| `RavenEraLib.Gate([name])` | returns a gate function; without a name the first available of `RavenEraGate`, `RavenEraProxy`, `HearthDBGate`, with the offline names `RavenEra_S0` / `RavenEra_S1` as fallbacks |
+| `RavenEraLib.Call(cmd[, arg])` | one value, or none |
+| `RavenEraLib.Sept(cmd, ...)` | joins every value with `\x01` - for `ExportFile`, `AppendFile`, `CombatLogAdd` |
+| `RavenEraLib.Pair(cmd, a, b)` | joins two values with a comma - for `UnitDist`, `UnitBehindN`, `LosUnits`; each side may be a low or a unit token |
+| `RavenEraLib.Scan(radius, ...)` | builds `"40,p,d"` for `ScanUnits` |
+| `RavenEraLib.BindInteract([key][, action])` | binds the interact key, default `F9` to `INTERACTTARGET` |
+
+Each call returns whatever the gate returned, or `nil, "gate missing"` when the gate is not
+loaded.
 
 ## Parameter formats
 
@@ -54,9 +77,8 @@ common source of "the command returned nothing".
 | `<guid>` | **Full GUID string**, or `<low>`. Both are accepted. | `"Creature-0-1-0-0-6466-0000003025"` |
 | `<token>` | **Unit token** as used by the stock API. See the list below. | `"target"` |
 | `<num>` | Decimal number. | `"1500"` |
-| `<a>,<b>` | Two `<low>` values separated by a **comma**, no spaces. | `"242f,277b29"` |
+| `<a>,<b>` | Two values separated by a **comma**, no spaces. Each side is a `<low>` or a `<token>`. | `"242f,277b29"`, `"player,target"` |
 | `<radius>` | Decimal radius in yards. | `"40"` |
-| `<combo>` | Key combination with `+`. | `"CTRL+SHIFT+X"`, `"W"`, `"ENTER"` |
 | `<path>` | Path relative to the game folder. `..` and absolute paths are rejected. | `"Logs\\out.txt"` |
 | `<text>` | Free text; may contain `\x01` only as an internal separator. | `"line one\r\n"` |
 
@@ -76,14 +98,14 @@ local low = UnitGUID("target"):match("(%x+)$")     --> "277b29"
 `party1`…`party4`, `pet1`…`pet4`, `raid1`…`raid40`, `raidpet1`…`raidpet40`,
 `boss1`…`boss8`, `nameplate1`…`nameplate40`, `arena1`…`arena5`.
 
-`RavenEra("UnitCandidateList")` prints the tokens this client actually accepts.
+`RavenEraGate("UnitCandidateList")` prints the tokens this client actually accepts.
 
 ### Which commands take which
 
 | Parameter | Commands |
 |---|---|
-| `<low>` | `UnitHP`, `UnitHPN`, `UnitStats`, `UnitStatsN`, `UnitPowerN`, `UnitResist`, `UnitResistN`, `UnitReach`, `UnitReachN`, `UnitNameN`, `UnitTypeN`, `UnitOwner`, `UnitTarget`, `Assist`, `ReactionN`, `Reaction`, `IsHostile`, `LootProbe`, `LootProbeN`, `ObjByGuid`, `ScanObj`, `TokenForGuid` |
-| `<low>` **or** `<token>` | `UnitPos`, `UnitPosN` |
+| `<low>` | `UnitHP`, `UnitHPN`, `UnitStats`, `UnitStatsN`, `UnitPowerN`, `UnitResist`, `UnitResistN`, `UnitReach`, `UnitReachN`, `UnitNameN`, `UnitTypeN`, `UnitOwner`, `UnitTarget`, `Assist`, `ReactionN`, `Reaction`, `IsHostile`, `LootProbe`, `LootProbeN`, `TokenForGuid` |
+| `<low>` **or** `<token>` | `UnitPos`, `UnitPosN`, `ObjByGuid`, `ScanObj` |
 | `<guid>` | `TargetByGuid`, `FocusByGuid` |
 | `<low>` only | `TargetByGuidLow` |
 | `<token>` **or** `<guid>` | `SetTargetCore`, `SetTargetToken`, `ResolveToken`, `SetFocusToken`, `NameplateIndex` |
@@ -111,7 +133,7 @@ local low = UnitGUID("target"):match("(%x+)$")     --> "277b29"
 | `ObjMgr` | `"begin/end/count"` | Addresses and size of the object container (diagnostics). |
 | `ObjCount` | `number` | Number of live objects. |
 | `ObjDbg` | `string` | Dumps the object container (diagnostics). |
-| `ObjByGuid(<low>)` | `"found=… vt=… pos=…"` | Object address, vtable and position. Searches the container and memory, so the unit does not have to be your target. |
+| `ObjByGuid(<low> or <token>)` | `"found=… vt=… pos=…"` | Object address, vtable and position. Searches the container and memory, so the unit does not have to be your target. A zero GUID returns `found=null` at once. |
 | `ScanObj(<low>)` | `"found=… pos=…"` | Same lookup, shorter output (diagnostics). |
 | `TokenForGuid(<low>)` | `string` | Unit token for that GUID (`"player"`, `"nameplate3"`), when the client has one. |
 
@@ -180,7 +202,7 @@ as Gamon are attackable but do not carry it.
 
 ```lua
 local low = UnitGUID("target"):match("(%x+)$")
-print(RavenEra("Assist", low))     --> true, and your target becomes what that unit targets
+print(RavenEraGate("Assist", low))     --> true, and your target becomes what that unit targets
 ```
 
 If that unit has no target of its own, `Assist` returns `false` and your target does
@@ -270,16 +292,15 @@ Both commands refuse to press anything unless **all** of these hold:
 
 Anything else returns `false` and no key is sent.
 
-The key itself is fixed: `Ctrl+Shift+X`. It must be bound to `INTERACTTARGET`, and the
+The key itself is fixed: `F9`. It must be bound to `INTERACTTARGET`, and the
 library can only ever trigger that one action, never an arbitrary key. The binding is
 set through the proxy entry point, which reaches the client's own `SetBinding`:
 
 ```lua
-GetTaxiBenchmarkMode("CTRL-SHIFT-X", "INTERACTTARGET", "bind")   --> 1
+RavenEraProxy("F9", "INTERACTTARGET", "bind")   --> 1
 ```
 
-Run it once per session, or let the `!RavenEraAPI` addon do it on load. No addon is
-required for it.
+Run it once per session, or call `RavenEraLib.BindInteract()` from your addon on load.
 
 ## 10. Camera
 
